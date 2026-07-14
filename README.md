@@ -9,42 +9,48 @@ To get a feel for the usability of the device, we need to read a value from the 
 - Reads the voltage and frequency from the sensor (it should be around 230V / 50Hz)
 - Sends these values to a server periodically.
 
-## Resources
+# Implemented Solution
 
-In `docs` you will find some resources:
+My idea was to create a rough 3-layered sensor-to-cloud architecture. Where we first get the data from the sensor, then proces and package it in the bridge, then we send the data to the cloud.
 
-- A user manual for the sensor, for some background information. Unfortunately it is in French only.
-- A manual that gives you all the information you need about the ModBus integration.
+For that I wanted to focus on creating an abstract HAL-like sensor gateway layer. Using a factory to create the idea of sensor abstraction, and separate simulation from ¨real" sensors. Then process and package the data in json format in the data bridge. And finally, the buffered data would be asyncronisly sent to the cloud using the websocket server.
 
-We have provided some boilerplate code to work with `pymodbus` to read the device in `./src/exporter-ecoadapt/exporter-ecoadapt.py`. You can reuse this code, or start from scratch. To run it, create a virtual environment and install the requirements:
+## Assumptions taken
+- Polling every 5 seconds
+- Only phase 1 registers where considered (voltage and frequency)
+- Register word order is swapped (derived from one sample output)
 
-```shell
-python3 -m venv ./venv
-source ./venv/bin/activate
-pip3 install -r ./requirements.txt
+
+## Architecture: very high level overview
+
+```mermaid
+sequenceDiagram
+    participant Sensor as Sensor (EcoAdapt/Mock)
+    participant Exporter as Exporter
+    participant Queue as AsyncQueue
+    participant WS as WebSocket Server
+
+    Exporter->>Sensor: connect()
+
+    loop Every 5s
+        Exporter->>Sensor: read()
+        Sensor-->>Exporter: {voltage, frequency}
+        Exporter->>Queue: enqueue(reading + timestamp)
+    end
+
+    loop Concurrent
+        Queue-->>Exporter: dequeue(reading)
+        Exporter->>WS: send(JSON)
+    end
 ```
+## Future ideas?
+I did not manage to do everithing I wanted, since I had time constraint I did not attept to do TDD at all.
 
-Since you have no sensor attached to your system, not much will happen. We have provided the output of the script in the comments at the end of the script, this can get you started with some sensor responses. To be compatible with our bridges, the code needs to be deployed and controlled over ssh & scp, and the code will have to be compatible with Pyhon 3.7.3.
-
-If you just need a few more responses from the sensor (for specific registers) we can provide them.
-
-The protocol to send data to a server is left up to you as well. One option could be to send the data over a websocket. A minimal receiving websocket server can be found in `./dev`. It just prints out whatever you send it, but that is enough for this proof of concept (no need for storage, monitoring or analysis). You need to install `requirements-dev` to get the right dependencies, and set a subprotocol (see the `TODO` in the file).
-
-## Process
-
-> TLDR;
-> 1. Spend approximately 6 hours on the assignment
-> 2. Make a conscious decision on what you want to focus on: it's fine if you
-cannot complete all aspects of the assignment
-> 3. Send us your solution before the technical interview, as a zip file or by sharing a git repo
-> 4. Contact us if you have any questions
-
-Please keep in mind:
-
-- This assignment is a toy example, Sensorfact will not own your code, and does not intend to use it for anything but evaluation of your skills.
-- EcoAdapt is a real company and Sensorfact works with their sensors, but they are not aware of this assignment. Please do not contact EcoAdapt for help or support.
-- We understand that you may not have experience with all aspects of this assignment. Make sure that you can show something during the technical interview and make an effort to learn something new. It's often really interesting to discuss how you learn and act if you're stuck, as you will also encounter new challenges regularly when working for Sensorfact.
-- We intend to be mindful of your time, and expect you to spend only a few hours (<6) on this assignment, which is too little to do everything you might want. We do not need the result to be polished and 'done'. Decide what you want to focus on and reserve some time to wrap it up and communicate how far you got. We are interested in the results as well as the process and the choices that got you there.
-- The result of the assignment will be a proof of concept only, but we would like to discuss how you would build it into something we might deploy to hundreds of customers.
-- Take this assignment as an opportunity to show us your style: what you like to work on, what you find important. You can neglect or handwave the boring stuff.
-- If you have any further questions, do not hesitate to contact us.
+- Add tests
+- I wanted things to be more concurrent and async. So I would create a data_entry or sensor_reading class, where each time the sensors are read, there would be a new data instance. Then maybe we can stack them based on priority, fir the bridge to process them acordinglly?... something with lambda functions to make it really async. I don't know if its worth it, but it sounds interesting.
+- A way to verify valid sensor data
+- A buffer managing policy. How big is the buffer? is it persistent? Also, currently no lock.
+- Some server health and connection monitoring?
+- NTP synchronization?
+- Since this should be managed by a systemd service, we need to add the correct signals and environment variables
+...and so on...
