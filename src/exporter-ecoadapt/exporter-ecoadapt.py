@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-A minimal EcoAdapt modbus reader.
-Reads voltage and frequency periodically and sends them via WebSocket.
-"""
-
 import asyncio
 import json
 import logging
@@ -12,7 +7,9 @@ from datetime import datetime, timezone
 from sensor_factory import create_sensor
 from ws_client import create_ws_factory
 
-# configure the client logging
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 FORMAT = (
     "%(asctime)-15s %(threadName)-15s "
     "%(levelname)-8s %(module)-15s:%(lineno)-8s %(message)s"
@@ -25,6 +22,9 @@ INTERVAL = 5  # seconds between reads
 WS_URL = "ws://127.0.0.1:9000"
 
 
+# ---------------------------------------------------------------------------
+# Sensor setup
+# ---------------------------------------------------------------------------
 def setup_sensor():
     """Create and connect a sensor, falling back to mock if unavailable."""
     sensor = create_sensor()
@@ -37,33 +37,58 @@ def setup_sensor():
     return sensor
 
 
-async def read_loop(sensor, ws_factory, interval):
-    """Periodically read sensor data and send via WebSocket."""
-    log.info("Starting periodic reads (interval=%ds)" % interval)
-    # Yield once to let the event loop complete the WebSocket handshake
-    await asyncio.sleep(0.1)
+# ---------------------------------------------------------------------------
+# Async pipeline (producer / consumer)
+# ---------------------------------------------------------------------------
+async def get_sensor_data(sensor, sensor_data_queue, interval):
+    """Read sensor data periodically and enqueue readings."""
+    log.info("get_sensor_data started (interval=%ds)" % interval)
     try:
         while True:
             reading = sensor.read()
-            payload = json.dumps({
-                "timestamp": datetime.now(timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%S.%fZ"
-                ),
-                "voltage": reading["voltage"],
-                "frequency": reading["frequency"],
-            })
-            log.info("Sending: %s" % payload)
-            protocol = ws_factory.ws_protocol if ws_factory else None
-            if protocol and protocol.state == protocol.STATE_OPEN:
-                protocol.sendMessage(payload.encode("utf-8"))
+            reading["timestamp"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
+            sensor_data_queue.put_nowait(reading)
             await asyncio.sleep(interval)
     except asyncio.CancelledError:
         pass
     finally:
-        log.info("Shutting down")
         sensor.close()
 
 
+async def send_sensor_data(sensor_data_queue, ws_factory):
+    """Dequeue readings and send them over WebSocket."""
+    log.info("send_sensor_data started")
+    try:
+        while True:
+            reading = await sensor_data_queue.get()
+            payload = json.dumps(reading)
+            log.info("Sending: %s" % payload)
+            protocol = ws_factory.ws_protocol if ws_factory else None
+            if protocol and protocol.state == protocol.STATE_OPEN:
+                protocol.sendMessage(payload.encode("utf-8"))
+    except asyncio.CancelledError:
+        pass
+
+
+async def run_exporter(sensor, ws_factory):
+    """Run producer and consumer concurrently."""
+    sensor_data_queue = asyncio.Queue()
+    # Let the WebSocket handshake complete before consuming
+    await asyncio.sleep(0.1)
+    getter = asyncio.ensure_future(get_sensor_data(sensor, sensor_data_queue, INTERVAL))
+    sender = asyncio.ensure_future(send_sensor_data(sensor_data_queue, ws_factory))
+    try:
+        await asyncio.gather(getter, sender)
+    except asyncio.CancelledError:
+        getter.cancel()
+        sender.cancel()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 def run_sync_client():
     sensor = setup_sensor()
     loop = asyncio.new_event_loop()
@@ -80,7 +105,7 @@ def run_sync_client():
         ws_factory = None
 
     try:
-        loop.run_until_complete(read_loop(sensor, ws_factory, INTERVAL))
+        loop.run_until_complete(run_exporter(sensor, ws_factory))
     except KeyboardInterrupt:
         log.info("Stopped by user")
 
