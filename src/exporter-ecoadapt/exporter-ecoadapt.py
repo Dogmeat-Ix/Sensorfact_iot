@@ -69,7 +69,10 @@ async def send_sensor_data(sensor_data_queue, ws_factory):
             if protocol and protocol.state == protocol.STATE_OPEN:
                 protocol.sendMessage(payload.encode("utf-8"))
     except asyncio.CancelledError:
-        pass
+        protocol = ws_factory.ws_protocol if ws_factory else None
+        if protocol and protocol.state == protocol.STATE_OPEN:
+            protocol.sendClose(1000)
+            await asyncio.sleep(0.1)
 
 
 async def run_exporter(sensor, ws_factory):
@@ -89,26 +92,26 @@ async def run_exporter(sensor, ws_factory):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-def run_sync_client():
-    sensor = setup_sensor()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    # Connect WebSocket
+async def run_sync_client(sensor):
     ws_factory = create_ws_factory(WS_URL)
     try:
-        coro = loop.create_connection(ws_factory, "127.0.0.1", 9000)
-        loop.run_until_complete(coro)
+        loop = asyncio.get_event_loop()
+        await loop.create_connection(ws_factory, "127.0.0.1", 9000)
         log.info("WebSocket TCP connected to %s" % WS_URL)
     except Exception as e:
         log.warning("WebSocket unavailable (%s), will only log readings" % e)
         ws_factory = None
 
+    await run_exporter(sensor, ws_factory)
+
+
+def setup_sync_client():
+    sensor = setup_sensor()
     try:
-        loop.run_until_complete(run_exporter(sensor, ws_factory))
+        asyncio.run(run_sync_client(sensor))
     except KeyboardInterrupt:
         log.info("Stopped by user")
 
 
 if __name__ == "__main__":
-    run_sync_client()
+    setup_sync_client()
