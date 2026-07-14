@@ -27,35 +27,53 @@ def decode_float(low_word, high_word):
 
 def run_sync_client():
     log.info("Setting up client")
-    client = ModbusClient(ADDRESS, port=502)
-    client.connect()
 
-    log.info("Reading registers")
-    read_registers = [
-        (0, 1),
-        (1, 1),
-        (2, 3),
-        (244, 12),
-        (352, 12),
-        (388, 12),
-        (424, 12),
-    ]
-    for r in read_registers:
-        resp = client.read_input_registers(r[0], r[1], unit=UNIT)
-        log.info("%s: %s: %s" % (r, resp, resp.registers))
+    connected = False
+    client = None
 
-    # Decode voltage (register 352) and frequency (register 424)
-    voltage_resp = client.read_input_registers(352, 2, unit=UNIT)
-    voltage = decode_float(voltage_resp.registers[0], voltage_resp.registers[1])
+    if ModbusClient is not None:
+        client = ModbusClient(ADDRESS, port=502)
+        try:
+            connected = client.connect()
+        except Exception as e:
+            log.warning("Connection failed: %s" % e)
 
-    freq_resp = client.read_input_registers(424, 2, unit=UNIT)
-    frequency = decode_float(freq_resp.registers[0], freq_resp.registers[1])
+    if connected:
+        log.info("Connected to sensor at %s" % ADDRESS)
+
+        log.info("Reading registers")
+        read_registers = [
+            (0, 1),
+            (1, 1),
+            (2, 3),
+            (244, 12),
+            (352, 12),
+            (388, 12),
+            (424, 12),
+        ]
+        for r in read_registers:
+            resp = client.read_input_registers(r[0], r[1], unit=UNIT)
+            log.info("%s: %s: %s" % (r, resp, resp.registers))
+
+        # Decode voltage (register 352) and frequency (register 424)
+        voltage_resp = client.read_input_registers(352, 2, unit=UNIT)
+        voltage = decode_float(voltage_resp.registers[0], voltage_resp.registers[1])
+
+        freq_resp = client.read_input_registers(424, 2, unit=UNIT)
+        frequency = decode_float(freq_resp.registers[0], freq_resp.registers[1])
+
+        client.close()
+    else:
+        if ModbusClient is None:
+            log.warning("pymodbus not installed, using sample data")
+        else:
+            log.warning("No sensor available, using sample data")
+        # Sample values from real device capture (2021-03-19)
+        voltage = decode_float(49709, 17262)    # 238.76 V
+        frequency = decode_float(54339, 16973)  # 51.46 Hz
 
     log.info("Voltage: %.2f V" % voltage)
     log.info("Frequency: %.2f Hz" % frequency)
-
-    log.info("Closing client")
-    client.close()
 
 
 if __name__ == "__main__":
