@@ -4,6 +4,7 @@ A minimal EcoAdapt modbus reader
 """
 
 import logging
+import struct
 from pymodbus.client.sync import ModbusTcpClient as ModbusClient
 
 # configure the client logging
@@ -17,6 +18,11 @@ log.setLevel(logging.INFO)
 
 UNIT = 0x1
 ADDRESS = "169.254.20.1"
+
+
+def decode_float(low_word, high_word):
+    """Decode IEEE 754 float from two 16-bit registers (swapped word order)."""
+    return struct.unpack(">f", struct.pack(">HH", high_word, low_word))[0]
 
 
 def run_sync_client():
@@ -37,6 +43,16 @@ def run_sync_client():
     for r in read_registers:
         resp = client.read_input_registers(r[0], r[1], unit=UNIT)
         log.info("%s: %s: %s" % (r, resp, resp.registers))
+
+    # Decode voltage (register 352) and frequency (register 424)
+    voltage_resp = client.read_input_registers(352, 2, unit=UNIT)
+    voltage = decode_float(voltage_resp.registers[0], voltage_resp.registers[1])
+
+    freq_resp = client.read_input_registers(424, 2, unit=UNIT)
+    frequency = decode_float(freq_resp.registers[0], freq_resp.registers[1])
+
+    log.info("Voltage: %.2f V" % voltage)
+    log.info("Frequency: %.2f Hz" % frequency)
 
     log.info("Closing client")
     client.close()
