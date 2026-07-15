@@ -46,7 +46,7 @@ sequenceDiagram
 ## Future ideas?
 I did not manage to do everithing I wanted, since I had time constraint I did not attept to do TDD at all.
 
-- Add tests
+- ~~Add tests~~ Ok, I added minimal test before submition, they did not let me sleep.
 - I wanted things to be more concurrent and async. So I would create a data_entry or sensor_reading class, where each time the sensors are read, there would be a new data instance. Then maybe we can stack them based on priority, fir the bridge to process them acordinglly?... something with lambda functions to make it really async. I don't know if its worth it, but it sounds interesting.
 - A way to verify valid sensor data
 - A buffer managing policy. How big is the buffer? is it persistent? Also, currently no lock.
